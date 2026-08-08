@@ -1,0 +1,85 @@
+name: Flutter Job Radar
+
+on:
+  schedule:
+    # 07:00 UTC daily (~10:00 TR)
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+    inputs:
+      freshness:
+        description: "Brave freshness (auto | pd | pw | pm)"
+        required: false
+        default: auto
+      notify_seed:
+        description: "Send full digest on backfill (true/false)"
+        required: false
+        default: "false"
+
+permissions:
+  contents: read
+  actions: read
+  # artifacts upload/download need default GITHUB_TOKEN write for actions
+  # (contents:read is enough for checkout; artifact APIs use separate scopes)
+
+jobs:
+  radar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download previous jobs.db artifact
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          name: jobs-db
+          path: data
+          workflow: job-radar.yml
+          workflow_conclusion: success
+          if_no_artifact_found: warn
+          search_artifacts: true
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+      - name: Ensure data directory
+        run: mkdir -p data
+
+      - name: Run Flutter Job Radar
+        env:
+          BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          FRESHNESS="${{ github.event.inputs.freshness || 'auto' }}"
+          EXTRA=""
+          if [ "${{ github.event.inputs.notify_seed }}" = "true" ]; then
+            EXTRA="--notify-seed"
+          fi
+          python main.py --freshness "$FRESHNESS" --db data/jobs.db --html output.html $EXTRA
+
+      - name: Upload jobs.db
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jobs-db
+          path: data/jobs.db
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Upload HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jobs-html
+          path: output.html
+          if-no-files-found: warn
+          retention-days: 30
