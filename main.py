@@ -129,6 +129,7 @@ def run() -> int:
                     raw.get("title") or "",
                     raw.get("description") or "",
                     raw.get("extra_snippets") or [],
+                    url=url,
                 )
                 snippet = build_snippet(
                     raw.get("description") or "",

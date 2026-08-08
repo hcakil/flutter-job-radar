@@ -87,6 +87,8 @@ def send_telegram(
 ) -> None:
     if not bot_token or not chat_id:
         raise ValueError("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are required")
+    # Avoid logging the bot token (httpx may print full URL at INFO).
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     with httpx.Client(timeout=timeout) as client:
         for message in messages:
