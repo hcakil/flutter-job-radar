@@ -19,6 +19,8 @@ def format_digest(
     jobs: Sequence[JobRow],
     *,
     filtered_count: int = 0,
+    late_indexed: int = 0,
+    freshness: str | None = None,
     header_note: str | None = None,
 ) -> list[str]:
     """Build one or more Telegram messages for a digest."""
@@ -26,13 +28,20 @@ def format_digest(
     yellow = sum(1 for j in jobs if j.bucket == "YELLOW")
     total = len(jobs)
 
+    meta_bits: list[str] = [f"🟢{green} 🟡{yellow}"]
+    if filtered_count:
+        meta_bits.append(f"{filtered_count} filtered")
+    meta_bits.append(f"late_indexed={late_indexed}")
+    if freshness:
+        meta_bits.append(f"freshness={freshness}")
+
     lines: list[str] = [
-        f"<b>{total} new Flutter jobs</b> (🟢{green} 🟡{yellow}"
-        + (f" · {filtered_count} filtered" if filtered_count else "")
-        + ")",
+        f"<b>{total} new Flutter jobs</b> ({' · '.join(meta_bits)})",
     ]
-    if header_note:
-        lines.append(header_note)
+    default_note = f"new={total} · late_indexed={late_indexed}"
+    if freshness:
+        default_note += f" · freshness={freshness}"
+    lines.append(header_note or default_note)
     lines.append("")
 
     for job in sorted(

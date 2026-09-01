@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Flutter Job Radar V1 — Brave Search → score → SQLite → Telegram/HTML."""
+"""Flutter Job Radar — Brave Search + aggregators → score → SQLite → Telegram/HTML."""
 
 from __future__ import annotations
 
@@ -12,6 +12,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from age import is_stale_age
+from aggregators import fetch_aggregator_jobs
 from brave_client import BraveClient
 from notify import format_digest, send_simple_message, send_telegram
 from queries import QUERIES
@@ -32,12 +34,12 @@ logger = logging.getLogger("job_radar")
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Flutter Job Radar V1")
+    parser = argparse.ArgumentParser(description="Flutter Job Radar")
     parser.add_argument(
         "--freshness",
         choices=["pd", "pw", "pm", "py", "auto"],
         default="auto",
-        help="Brave freshness filter (default: auto = pm first run, else pw)",
+        help="Brave freshness filter (default: auto = pm first run, else pd)",
     )
     parser.add_argument(
         "--db",
@@ -71,7 +73,7 @@ def resolve_freshness(store: JobStore, requested: str) -> tuple[str, bool]:
         return requested, first and requested == "pm"
     if first:
         return "pm", True
-    return "pw", False
+    return "pd", False
 
 
 def build_snippet(description: str, extras: list[str]) -> str:
@@ -107,6 +109,7 @@ def run() -> int:
         client = BraveClient(api_key)
         new_rows: list[JobRow] = []
         filtered_new = 0
+        late_indexed = 0
         seen_urls: set[str] = set()
         query_errors = 0
 
@@ -120,43 +123,41 @@ def run() -> int:
 
             logger.info("Query %r → %d results", query, len(results))
             for raw in results:
-                url = raw.get("url") or ""
-                if not url or url in seen_urls:
-                    continue
-                seen_urls.add(url)
-
-                scored = score_job(
-                    raw.get("title") or "",
-                    raw.get("description") or "",
-                    raw.get("extra_snippets") or [],
-                    url=url,
+                kind, row = _ingest_raw(
+                    store,
+                    raw,
+                    seen_urls,
+                    is_backfill=is_backfill,
+                    notify_seed=args.notify_seed,
                 )
-                snippet = build_snippet(
-                    raw.get("description") or "",
-                    raw.get("extra_snippets") or [],
-                )
-                # On backfill, mark as already notified so we don't flood later
-                mark_notified = is_backfill and not args.notify_seed
-
-                row = store.upsert_job(
-                    url=url,
-                    title=raw.get("title") or "",
-                    snippet=snippet,
-                    score=scored.score,
-                    bucket=scored.bucket,
-                    age=raw.get("age") or "",
-                    matched=", ".join(scored.matched),
-                    mark_notified=mark_notified,
-                )
-                if row is None:
-                    continue
-
-                if is_notifiable(scored):
+                if kind == "notify" and row is not None:
                     new_rows.append(row)
-                else:
+                elif kind == "filtered":
                     filtered_new += 1
+                elif kind == "late":
+                    late_indexed += 1
 
-        # Prefer GREEN then YELLOW, higher score first
+        try:
+            agg_jobs, agg_errors = fetch_aggregator_jobs()
+            query_errors += agg_errors
+            for raw in agg_jobs:
+                kind, row = _ingest_raw(
+                    store,
+                    raw,
+                    seen_urls,
+                    is_backfill=is_backfill,
+                    notify_seed=args.notify_seed,
+                )
+                if kind == "notify" and row is not None:
+                    new_rows.append(row)
+                elif kind == "filtered":
+                    filtered_new += 1
+                elif kind == "late":
+                    late_indexed += 1
+        except Exception:
+            query_errors += 1
+            logger.exception("Aggregator fetch failed")
+
         new_rows.sort(key=lambda j: (0 if j.bucket == "GREEN" else 1, -j.score))
 
         now = datetime.now(timezone.utc).isoformat()
@@ -172,17 +173,25 @@ def run() -> int:
         render_html(
             report_jobs,
             output_path=args.html,
-            run_note=f"freshness={freshness}; new={len(new_rows)}; filtered_new={filtered_new}",
+            run_note=(
+                f"freshness={freshness}; new={len(new_rows)}; "
+                f"filtered_new={filtered_new}; late_indexed={late_indexed}"
+            ),
         )
         logger.info("Wrote HTML → %s (%d jobs)", args.html, len(report_jobs))
+        header_note = (
+            f"new={len(new_rows)} · late_indexed={late_indexed} "
+            f"· freshness={freshness}"
+        )
 
         if args.dry_run:
             logger.info(
-                "Dry-run: would notify %d jobs (backfill=%s)",
+                "Dry-run: would notify %d jobs (backfill=%s late_indexed=%d)",
                 len(new_rows),
                 is_backfill,
+                late_indexed,
             )
-            _print_summary(new_rows, filtered_new, is_backfill)
+            _print_summary(new_rows, filtered_new, is_backfill, late_indexed)
             return 0 if query_errors == 0 else 2
 
         if not bot_token or not chat_id:
@@ -201,10 +210,11 @@ def run() -> int:
                     f"(🟢{sum(1 for j in new_rows if j.bucket == 'GREEN')} "
                     f"🟡{sum(1 for j in new_rows if j.bucket == 'YELLOW')})\n"
                     f"Filtered: {filtered_new}\n"
-                    f"Daily digests will only include <b>new</b> listings."
+                    f"Late-indexed: {late_indexed}\n"
+                    f"Digests will only include <b>new</b> listings "
+                    f"(age ≤ 3 days)."
                 ),
             )
-            # Ensure seeded rows won't re-notify
             store.mark_notified([j.url for j in new_rows])
             logger.info("Backfill complete — silent seed notification sent")
             return 0 if query_errors == 0 else 2
@@ -216,24 +226,87 @@ def run() -> int:
                 text=(
                     f"<b>Flutter Job Radar</b> — no new matches "
                     f"(freshness=<code>{freshness}</code>, "
-                    f"filtered={filtered_new})."
+                    f"filtered={filtered_new}, late_indexed={late_indexed})."
                 ),
             )
             logger.info("No new notifiable jobs")
             return 0 if query_errors == 0 else 2
 
-        messages = format_digest(new_rows, filtered_count=filtered_new)
+        messages = format_digest(
+            new_rows,
+            filtered_count=filtered_new,
+            late_indexed=late_indexed,
+            freshness=freshness,
+            header_note=header_note,
+        )
         send_telegram(bot_token=bot_token, chat_id=chat_id, messages=messages)
         store.mark_notified([j.url for j in new_rows])
-        logger.info("Notified %d new jobs", len(new_rows))
+        logger.info("Notified %d new jobs (late_indexed=%d)", len(new_rows), late_indexed)
         return 0 if query_errors == 0 else 2
     finally:
         store.close()
 
 
-def _print_summary(jobs: list[JobRow], filtered: int, backfill: bool) -> None:
+def _ingest_raw(
+    store: JobStore,
+    raw: dict,
+    seen_urls: set[str],
+    *,
+    is_backfill: bool,
+    notify_seed: bool,
+) -> tuple[str | None, JobRow | None]:
+    """Insert a raw listing. Returns (kind, row) where kind is notify/filtered/late."""
+    url = raw.get("url") or ""
+    if not url or url in seen_urls:
+        return None, None
+    seen_urls.add(url)
+
+    scored = score_job(
+        raw.get("title") or "",
+        raw.get("description") or "",
+        raw.get("extra_snippets") or [],
+        url=url,
+    )
+    snippet = build_snippet(
+        raw.get("description") or "",
+        raw.get("extra_snippets") or [],
+    )
+    age = raw.get("age") or ""
+    late = is_stale_age(age)
+    notifiable = is_notifiable(scored)
+    mark_notified = (is_backfill and not notify_seed) or (late and notifiable)
+
+    row = store.upsert_job(
+        url=url,
+        title=raw.get("title") or "",
+        snippet=snippet,
+        score=scored.score,
+        bucket=scored.bucket,
+        age=age,
+        matched=", ".join(scored.matched),
+        mark_notified=mark_notified,
+    )
+    if row is None:
+        return None, None
+
+    if notifiable and late:
+        return "late", row
+    if notifiable:
+        return "notify", row
+    return "filtered", row
+
+
+def _print_summary(
+    jobs: list[JobRow],
+    filtered: int,
+    backfill: bool,
+    late_indexed: int = 0,
+) -> None:
     print("---")
-    print(f"backfill={backfill} new_notifiable={len(jobs)} filtered_new={filtered}")
+    print(
+        f"backfill={backfill} new_notifiable={len(jobs)} "
+        f"filtered_new={filtered} late_indexed={late_indexed}"
+    )
     for job in jobs[:20]:
         print(f"  [{job.bucket} {job.score}] {job.title} · {job.url}")
 

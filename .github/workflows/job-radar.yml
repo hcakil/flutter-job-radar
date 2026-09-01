@@ -2,8 +2,8 @@ name: Flutter Job Radar
 
 on:
   schedule:
-    # 07:00 UTC daily (~10:00 TR)
-    - cron: "0 7 * * *"
+    # 09:00 / 15:00 / 21:00 TR
+    - cron: "0 6,12,18 * * *"
   workflow_dispatch:
     inputs:
       freshness:
@@ -59,7 +59,11 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          FRESHNESS="${{ github.event.inputs.freshness || 'auto' }}"
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            FRESHNESS="pd"
+          else
+            FRESHNESS="${{ github.event.inputs.freshness || 'auto' }}"
+          fi
           EXTRA=""
           if [ "${{ github.event.inputs.notify_seed }}" = "true" ]; then
             EXTRA="--notify-seed"
