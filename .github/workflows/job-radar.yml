@@ -60,7 +60,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           if [ "${{ github.event_name }}" = "schedule" ]; then
-            FRESHNESS="pd"
+            FRESHNESS="pw"
           else
             FRESHNESS="${{ github.event.inputs.freshness || 'auto' }}"
           fi

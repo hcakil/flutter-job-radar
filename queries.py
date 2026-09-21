@@ -7,6 +7,8 @@ QUERIES: list[str] = [
     'site:linkedin.com/jobs/view "Flutter" (remote OR Worldwide OR contractor)',
     'site:jobs.lever.co "Flutter" (Developer OR Engineer OR Dart)',
     'site:boards.greenhouse.io "Flutter" (Developer OR Engineer OR Dart)',
+    'site:job-boards.greenhouse.io "Flutter" (Developer OR Engineer OR Dart)',
     'site:jobs.ashbyhq.com "Flutter" (Developer OR Engineer OR Dart)',
     'site:apply.workable.com "Flutter" (Developer OR Engineer OR Dart)',
+    'site:jobs.workable.com "Flutter" (Developer OR Engineer OR Dart)',
 ]

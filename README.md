@@ -6,11 +6,11 @@ LinkedIn native job alerts are the **fast lane** for LinkedIn Easy Apply. This r
 
 ## What it does
 
-1. Runs 7 Brave `site:` queries (LinkedIn + Lever + Greenhouse + Ashby + Workable)
+1. Runs 9 Brave `site:` queries (LinkedIn + Lever + Greenhouse + Ashby + Workable, including `jobs.workable.com` and `job-boards.greenhouse.io`)
 2. Also pulls Flutter jobs from [Remotive](https://remotive.com/api/remote-jobs?search=flutter) and [RemoteOK](https://remoteok.com/api)
 3. First run uses `freshness=pm` (last 31 days) and **seeds quietly** (no flood)
-4. Later runs use `freshness=pd` (last 24 hours) by default and notify **only new** GREEN/YELLOW matches whose listing age is **≤ 3 days**
-5. Older hits are stored but counted as `late_indexed` (not Telegram “new”) — this is how a 2-week-old LinkedIn post stops looking like a fresh lead
+4. Later runs use `freshness=pw` (last 7 days) and notify **only new** GREEN/YELLOW matches whose listing age is **≤ 14 days**
+5. Older hits are stored but counted as `late_indexed` (not Telegram “new”) — month-old closed Easy Apply is skipped; a 1-week-old still-open role is not
 6. Writes `output.html` and sends a Telegram digest with links + snippets
 
 ## Setup
@@ -52,11 +52,11 @@ Workflow: [`.github/workflows/job-radar.yml`](.github/workflows/job-radar.yml)
 2. Add repository secrets: `BRAVE_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`
 3. Actions → **Flutter Job Radar** → Run workflow, or wait for cron at **06:00 / 12:00 / 18:00 UTC** (09:00 / 15:00 / 21:00 TR)
 
-Scheduled runs force `--freshness pd`. Manual `workflow_dispatch` can still pass `auto` / `pw` / `pm`.
+Scheduled runs force `--freshness pw`. Manual `workflow_dispatch` can still pass `auto` / `pd` / `pm`.
 
 `jobs.db` persists across runs via the `jobs-db` artifact.
 
-Brave budget: 3 runs × 7 queries ≈ 630 searches/month, inside the usual $5 free credit.
+Brave budget: 3 runs × 9 queries ≈ 810 searches/month, inside the usual $5 free credit.
 
 ## Scoring (no LLM)
 
@@ -70,7 +70,7 @@ Brave budget: 3 runs × 7 queries ≈ 630 searches/month, inside the usual $5 fr
 - **YELLOW** — remote-ish but Turkey eligibility unclear
 - **RED** — US-only / EU-only / onsite / local employment (not notified)
 
-Telegram header includes `new=X · late_indexed=Y · freshness=pd`. Each row still shows source + age (`linkedin.com · 2 days ago`).
+Telegram header includes `new=X · late_indexed=Y · freshness=pw`. Each row still shows source + age (`linkedin.com · 2 days ago`).
 
 ## Layout
 
@@ -78,7 +78,7 @@ Telegram header includes `new=X · late_indexed=Y · freshness=pd`. Each row sti
 main.py              orchestrator
 brave_client.py      Brave Web Search client
 aggregators.py       Remotive + RemoteOK
-age.py               listing-age parse + 3-day stale gate
+age.py               listing-age parse + 14-day stale gate
 queries.py           search templates
 scorer.py            keyword score + buckets
 store.py             SQLite + URL normalize

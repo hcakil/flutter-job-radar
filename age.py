@@ -5,7 +5,9 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 
-STALE_MAX_DAYS = 3
+# Brave often indexes LinkedIn/ATS days late. 3 days dropped still-open
+# jobs (Netguru ~1 week). 14 days still skips month-old closed Easy Apply.
+STALE_MAX_DAYS = 14
 
 _AGE_RE = re.compile(
     r"(?:about\s+)?(\d+)\s*(minute|hour|day|week|month|year)s?\s+ago",

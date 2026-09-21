@@ -39,7 +39,7 @@ def parse_args() -> argparse.Namespace:
         "--freshness",
         choices=["pd", "pw", "pm", "py", "auto"],
         default="auto",
-        help="Brave freshness filter (default: auto = pm first run, else pd)",
+        help="Brave freshness filter (default: auto = pm first run, else pw)",
     )
     parser.add_argument(
         "--db",
@@ -73,7 +73,7 @@ def resolve_freshness(store: JobStore, requested: str) -> tuple[str, bool]:
         return requested, first and requested == "pm"
     if first:
         return "pm", True
-    return "pd", False
+    return "pw", False
 
 
 def build_snippet(description: str, extras: list[str]) -> str:
@@ -212,7 +212,7 @@ def run() -> int:
                     f"Filtered: {filtered_new}\n"
                     f"Late-indexed: {late_indexed}\n"
                     f"Digests will only include <b>new</b> listings "
-                    f"(age ≤ 3 days)."
+                    f"(age ≤ 14 days)."
                 ),
             )
             store.mark_notified([j.url for j in new_rows])
